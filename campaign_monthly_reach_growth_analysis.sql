@@ -106,22 +106,15 @@ from google_ads_basic_daily
 cte2 as (
 select date_trunc('month', ad_date) as month 
        ,campaign_name
-       ,sum(reach) as reach
+       ,coalesce(sum(reach), 0) as reach
 from cte
 group by 1, 2
-),
-cte3 as (
+)
 select month 
       ,campaign_name
-      ,reach - lag(reach) over (partition by campaign_name order by month) as reach_change
+      ,reach - coalesce(lag(reach) over (partition by campaign_name order by month), 0) as reach_change
 from cte2
-where campaign_name is not null 
-)
-select campaign_name
-       ,sum(reach_change) as ttl_growth_of_campaign
-from cte3
-group by campaign_name
-order by ttl_growth_of_campaign desc
+order by 3 desc
 limit 1;
 
 -- This section returns the adset_name with the longest streak
