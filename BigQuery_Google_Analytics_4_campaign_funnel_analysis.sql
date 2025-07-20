@@ -43,7 +43,7 @@ limit 5;
 -- The query tracks funnel stages (session → cart → checkout → purchase) 
 -- using distinct session counts and computes corresponding conversion rates per day.
 with cte as (
-select date(timestamp_micros(event_timestamp)) as event_date
+select date(timestamp_micros(event_timestamp)) as event_date 
       ,traffic_source.source as source
       ,traffic_source.medium as medium
       ,traffic_source.name as campaign
@@ -53,17 +53,14 @@ select date(timestamp_micros(event_timestamp)) as event_date
        where key = 'ga_session_id')) as user_sessions
 from `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
 where _table_suffix between '20210101' and '20211231'
+and event_name in ('session_start', 'add_to_cart', 'begin_checkout', 'purchase')
 ),
 cte_2 as (
 select  event_date 
        ,campaign
        ,source
        ,medium
-       ,count(distinct 
-               case
-               when event_name = 'session_start'
-               then user_sessions
-               end) as user_sessions_count 
+       ,count(distinct user_sessions) as user_sessions_count
        ,count(distinct 
                case
                when event_name = 'add_to_cart'
@@ -96,42 +93,33 @@ from cte_2;
 -- This query extracts the page path for each session start event, 
 -- joins it with purchase events based on user-session ID, and computes conversion rate per page.
 with table_1 as (
-select  user_pseudo_id
-        ,concat(user_pseudo_id, (select value.int_value 
+select  concat(user_pseudo_id, (select value.int_value 
         from unnest(event_params)
-        where key = 'ga_session_id')) as user_sessions
+        where key = 'ga_session_id')) as user_sessions_id -- come up with user_sessions_id
         ,replace((select value.string_value
         from unnest(event_params)
-        where key = 'page_location'), 'https://shop.googlemerchandisestore.com/', '') as page_path
+        where key = 'page_location'), 'https://shop.googlemerchandisestore.com/', '') as page_path -- come up with clear page_path
 from `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*` as s
 where _table_suffix between '20210101' and '20211231'
-and event_name = 'session_start'
+and event_name = 'session_start' -- come up with event session
 ),
 table_2 as (
-select  user_pseudo_id
-        ,concat(user_pseudo_id, (select value.int_value 
+select  concat(user_pseudo_id, (select value.int_value 
         from unnest(event_params)
-        where key = 'ga_session_id')) as user_sessions
+        where key = 'ga_session_id')) as user_sessions_id -- come up with usser_sessions_id where event name is purchase
 from`bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*` as p
-where _table_suffix between '20210101' and '20211231'
+where _table_suffix between '2020101' and '20201231'
 and event_name = 'purchase'
-),
-final as (
-select  page_path
-        ,count(distinct s.user_sessions) AS session_count
-        ,count(distinct s.user_pseudo_id) AS unique_users
-        ,count(distinct p.user_sessions) AS purchase_count
-from table_1 s
-left join table_2 p 
-on s.user_sessions = p.user_sessions
-group by s.page_path
 )
-select  page_path 
-       ,session_count
-       ,unique_users 
-       ,purchase_count
-       ,round (case 
-                when session_count = 0 
+select  page_path
+        ,count(distinct s.user_sessions_id) AS session_count  --counting distinct sessions_and_users from session start
+        ,count(distinct p.user_sessions_id) AS purchase_count --counting distinct sessions_and_users from purchase
+        ,round (case 
+                when count(distinct s.user_sessions_id) = 0 
                 then null 
-                else (purchase_count / session_count) *100 end, 2) as conversion_rate
-from final;
+                else (count(distinct p.user_sessions_id) / count(distinct s.user_sessions_id)) *100 end, 2) || '%' as conversion_rate -- dividing and getting conversion rate
+from table_1 s
+left join table_2 p -- executing left join to combine the first table with session start with the second table with purchase 
+on s.user_sessions_id = p.user_sessions_id
+group by s.page_path
+order by 2 desc;
